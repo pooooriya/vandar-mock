@@ -3,7 +3,7 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const { Account, CreditLog, Payment } = require('./database');
 const jalaali = require('jalaali-js');
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('crypto');
 const swaggerUi = require('swagger-ui-express');
 const YAML = require('yamljs');
 const swaggerDocument = YAML.load('./swagger.yaml');
@@ -179,6 +179,38 @@ app.get(`${API_PREFIX}/cardholder/:cardholder_id/credit`, async (req, res) => {
     } catch (e) {
         responseError(res, 500, e.message);
     }
+});
+
+const generateRandomToken = (length = 40) => {
+    return require('crypto').randomBytes(length).toString('hex');
+};
+
+app.post('/v3/refreshtoken', (req, res) => {
+    const { refreshtoken } = req.body;
+
+    // بررسی وجود پارامتر (طبق داکیومنت required است)
+    if (!refreshtoken) {
+        return res.status(422).json({
+            message: "پارامتر refreshtoken الزامی است.",
+            errors: {
+                refreshtoken: ["The refreshtoken field is required."]
+            }
+        });
+    }
+
+    // تولید پاسخ موفق طبق نمونه وندار
+    // access_token معمولا طولانی‌تر است
+    const responseData = {
+        "token_type": "Bearer",
+        "expires_in": 432000, // 5 روز (طبق داکیومنت)
+        "access_token": generateRandomToken(64),
+        "refresh_token": generateRandomToken(64)
+    };
+
+    // لاگ کردن برای دیباگ (اختیاری)
+    console.log('Token Refreshed!');
+
+    res.status(200).json(responseData);
 });
 
 app.get(`${API_PREFIX}/credit`, async (req, res) => {
