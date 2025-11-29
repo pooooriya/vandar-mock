@@ -1,0 +1,302 @@
+openapi: 3.0.0
+info:
+  title: Mock Ravand Credit Service
+  description: سرویس ماک شده پرداخت اعتباری (مطابق مستندات وندار)
+  version: 1.0.0
+servers:
+  - url: http://localhost:3000
+    description: Local Mock Server
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    # --- Common Response Wrappers ---
+    GeneralSuccess:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "عملیات با موفقیت انجام شد."
+        data:
+          type: object
+
+    # --- Models ---
+    CreditAdjustmentItem:
+      type: object
+      properties:
+        cardholder_id:
+          type: string
+          format: uuid
+        credit_amount:
+          type: integer
+        type:
+          type: string
+          enum: [CREDIT, DEBIT]
+
+security:
+  - bearerAuth: []
+
+paths:
+  # 1. Register
+  /v1/business/{business}/ravand/provider/{provider}/cardholder/{cardholder_id}/credit/register:
+    post:
+      summary: ثبت نام سرویس اعتباری
+      tags: [Management]
+      parameters:
+        - in: path
+          name: business
+          required: true
+          schema: { type: string }
+        - in: path
+          name: provider
+          required: true
+          schema: { type: string }
+        - in: path
+          name: cardholder_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                credit_amount: { type: integer, example: 1000000 }
+      responses:
+        '200':
+          description: موفق
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/GeneralSuccess'
+                  - properties:
+                      data:
+                        properties:
+                          credit_balance: { type: integer }
+
+  # 2. Single Adjustment
+  /v1/business/{business}/ravand/provider/{provider}/cardholder/{cardholder_id}/credit/adjustment:
+    post:
+      summary: تنظیم اعتبار (تکی)
+      tags: [Credit]
+      parameters:
+        - in: path
+          name: business
+          required: true
+          schema: { type: string }
+        - in: path
+          name: provider
+          required: true
+          schema: { type: string }
+        - in: path
+          name: cardholder_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [credit_amount, type]
+              properties:
+                credit_amount: { type: integer, example: 500000 }
+                type: { type: string, enum: [CREDIT, DEBIT], example: CREDIT }
+      responses:
+        '200':
+          description: موفق
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/GeneralSuccess'
+                  - properties:
+                      data:
+                        properties:
+                          credit_balance: { type: integer }
+
+  # 3. Bulk Adjustment
+  /v1/business/{business}/ravand/provider/{provider}/credit/adjustment:
+    post:
+      summary: تنظیم اعتبار گروهی
+      tags: [Credit]
+      parameters:
+        - in: path
+          name: business
+          required: true
+          schema: { type: string }
+        - in: path
+          name: provider
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                credits:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/CreditAdjustmentItem'
+      responses:
+        '200':
+          description: موفق
+
+  # 4. Get Account List
+  /v1/business/{business}/ravand/provider/{provider}/credit/account:
+    get:
+      summary: دریافت لیست حساب‌های اعتباری
+      tags: [Reporting]
+      parameters:
+        - in: path
+          name: business
+          required: true
+          schema: { type: string }
+        - in: path
+          name: provider
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: لیست حساب‌ها
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/GeneralSuccess'
+                  - properties:
+                      data:
+                        properties:
+                          has_more: { type: boolean }
+                          accounts:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                cardholder_id: { type: string }
+                                account:
+                                  type: object
+                                  properties:
+                                    account_number: { type: string }
+                                    balance: { type: integer }
+                                credit:
+                                  type: object
+                                  properties:
+                                    status: { type: string }
+                                    balance: { type: integer }
+
+  # 5. Get User History
+  /v1/business/{business}/ravand/provider/{provider}/cardholder/{cardholder_id}/credit:
+    get:
+      summary: تاریخچه اعتبارات کاربر
+      tags: [Reporting]
+      parameters:
+        - in: path
+          name: business
+          required: true
+          schema: { type: string }
+        - in: path
+          name: provider
+          required: true
+          schema: { type: string }
+        - in: path
+          name: cardholder_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: موفق
+
+  # 6. Get All History
+  /v1/business/{business}/ravand/provider/{provider}/credit:
+    get:
+      summary: تاریخچه کلیه اعتبارات
+      tags: [Reporting]
+      parameters:
+        - in: path
+          name: business
+          required: true
+          schema: { type: string }
+        - in: path
+          name: provider
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: موفق
+
+  # 7. Update Status
+  /v1/business/{business}/ravand/provider/{provider}/cardholder/{cardholder_id}/credit/update-status:
+    put:
+      summary: تغییر وضعیت اعتبار (Active/Inactive)
+      tags: [Management]
+      parameters:
+        - in: path
+          name: business
+          required: true
+          schema: { type: string }
+        - in: path
+          name: provider
+          required: true
+          schema: { type: string }
+        - in: path
+          name: cardholder_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string, enum: [ACTIVE, INACTIVE] }
+      responses:
+        '200':
+          description: موفق
+
+  # 8. User Payments
+  /v1/business/{business}/ravand/provider/{provider}/cardholder/{cardholder_id}/credit/payment:
+    get:
+      summary: لیست پرداخت‌های کاربر
+      tags: [Payment]
+      parameters:
+        - in: path
+          name: business
+          required: true
+          schema: { type: string }
+        - in: path
+          name: provider
+          required: true
+          schema: { type: string }
+        - in: path
+          name: cardholder_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: موفق
+
+  # 9. All Payments
+  /v1/business/{business}/ravand/provider/{provider}/credit/payment:
+    get:
+      summary: لیست کل پرداخت‌ها
+      tags: [Payment]
+      parameters:
+        - in: path
+          name: business
+          required: true
+          schema: { type: string }
+        - in: path
+          name: provider
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: موفق
