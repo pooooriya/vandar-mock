@@ -12,6 +12,7 @@ const PORT = 3000;
 
 app.use(cors());
 app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static('public'));
 
 const getJalaaliNow = () => {
@@ -28,6 +29,19 @@ const responseError = (res, code, msg) => {
     res.status(code).json({ message: msg });
 };
 
+const toNumber = (val) => {
+    if (typeof val === 'number') return val;
+    if (typeof val === 'string') {
+        const pMap = { '۰':'0','۱':'1','۲':'2','۳':'3','۴':'4','۵':'5','۶':'6','۷':'7','۸':'8','۹':'9' };
+        const aMap = { '٠':'0','١':'1','٢':'2','٣':'3','٤':'4','٥':'5','٦':'6','٧':'7','٨':'8','٩':'9' };
+        let s = val.replace(/[۰-۹]/g, ch => pMap[ch]).replace(/[٠-٩]/g, ch => aMap[ch]);
+        s = s.replace(/[^\d-]/g, '');
+        const n = Number.parseInt(s, 10);
+        return n;
+    }
+    return NaN;
+};
+
 app.use('/swagger', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 app.use((req, res, next) => {
@@ -41,7 +55,8 @@ const API_PREFIX = '/v1/business/:business/ravand/provider/:provider';
 app.post(`${API_PREFIX}/cardholder/:cardholder_id/credit/register`, async (req, res) => {
     const { cardholder_id } = req.params;
     const { credit_amount } = req.body;
-    const amount = Number.parseInt(credit_amount, 10) || 0;
+    const parsed = toNumber(credit_amount);
+    const amount = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 
     try {
         let account = await Account.findOne({ where: { cardholder_id } });
@@ -75,7 +90,7 @@ app.post(`${API_PREFIX}/cardholder/:cardholder_id/credit/register`, async (req, 
 app.post(`${API_PREFIX}/cardholder/:cardholder_id/credit/adjustment`, async (req, res) => {
     const { cardholder_id } = req.params;
     const { credit_amount, type } = req.body;
-    const amount = Number.parseInt(credit_amount, 10);
+    const amount = toNumber(credit_amount);
 
     try {
         const account = await Account.findOne({ where: { cardholder_id } });
@@ -108,7 +123,19 @@ app.post(`${API_PREFIX}/cardholder/:cardholder_id/credit/adjustment`, async (req
 });
 
 app.post(`${API_PREFIX}/credit/adjustment`, async (req, res) => {
-    const { credits } = req.body;
+    let { credits } = req.body;
+    if (!credits) {
+        if (Array.isArray(req.body)) credits = req.body;
+        else if (req.body && req.body.cardholder_id) credits = [req.body];
+        else if (typeof req.body === 'string') {
+            try {
+                const parsed = JSON.parse(req.body);
+                if (Array.isArray(parsed)) credits = parsed;
+                else if (parsed && Array.isArray(parsed.credits)) credits = parsed.credits;
+                else if (parsed && parsed.cardholder_id) credits = [parsed];
+            } catch (e) {}
+        }
+    }
 
     const results = [];
 
@@ -120,7 +147,7 @@ app.post(`${API_PREFIX}/credit/adjustment`, async (req, res) => {
                 continue;
             }
 
-            const amount = Number.parseInt(item.credit_amount, 10);
+            const amount = toNumber(item.credit_amount);
             if (!Number.isFinite(amount) || amount <= 0) {
                 results.push({ ...item, has_error: true, error: { message: "Invalid amount" }, credit_balance: null });
                 continue;
@@ -305,18 +332,20 @@ app.get(`${API_PREFIX}/credit/payment`, async (req, res) => {
 
 app.post('/api/debug/simulate-payment', async (req, res) => {
     const { cardholder_id, amount } = req.body;
+    const amt = toNumber(amount);
     try {
         const account = await Account.findOne({ where: { cardholder_id } });
         if (!account) return responseError(res, 404, "User not found");
 
-        if (account.credit_balance < amount) return responseError(res, 400, "اعتبار کافی نیست");
+        if (!Number.isFinite(amt) || amt <= 0) return responseError(res, 422, "مبلغ نامعتبر است");
+        if (account.credit_balance < amt) return responseError(res, 400, "اعتبار کافی نیست");
 
-        account.credit_balance -= amount;
+        account.credit_balance -= amt;
         await account.save();
 
         await Payment.create({
             cardholder_id,
-            amount,
+            amount: amt,
             pay_id: uuidv4(),
             paid_at: getJalaaliNow(),
             settled: false
@@ -324,7 +353,7 @@ app.post('/api/debug/simulate-payment', async (req, res) => {
 
         await CreditLog.create({
             cardholder_id,
-            credit_amount: amount,
+            credit_amount: amt,
             type: 'DEBIT',
             adjusted_at: getJalaaliNow()
         });
