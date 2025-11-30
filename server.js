@@ -12,13 +12,11 @@ const PORT = 3000;
 
 app.use(cors());
 app.use(bodyParser.json());
-app.use(express.static('public')); // سرو کردن دشبورد
+app.use(express.static('public'));
 
-// --- Helpers ---
 const getJalaaliNow = () => {
     const d = new Date();
     const j = jalaali.toJalaali(d);
-    // فرمت ساده YYYY/MM/DD HH:mm:ss
     return `${j.jy}/${String(j.jm).padStart(2, '0')}/${String(j.jd).padStart(2, '0')} ${d.toLocaleTimeString('en-GB')}`;
 };
 
@@ -43,6 +41,7 @@ const API_PREFIX = '/v1/business/:business/ravand/provider/:provider';
 app.post(`${API_PREFIX}/cardholder/:cardholder_id/credit/register`, async (req, res) => {
     const { cardholder_id } = req.params;
     const { credit_amount } = req.body;
+    const amount = Number.parseInt(credit_amount, 10) || 0;
 
     try {
         let account = await Account.findOne({ where: { cardholder_id } });
@@ -52,15 +51,15 @@ app.post(`${API_PREFIX}/cardholder/:cardholder_id/credit/register`, async (req, 
 
         account = await Account.create({
             cardholder_id,
-            credit_balance: credit_amount || 0,
+            credit_balance: amount,
             status: 'ACTIVE'
         });
 
         // ثبت لاگ اولیه اگر اعتباری داده شده
-        if (credit_amount > 0) {
+        if (amount > 0) {
             await CreditLog.create({
                 cardholder_id,
-                credit_amount,
+                credit_amount: amount,
                 type: 'CREDIT',
                 adjusted_at: getJalaaliNow()
             });
@@ -76,15 +75,20 @@ app.post(`${API_PREFIX}/cardholder/:cardholder_id/credit/register`, async (req, 
 app.post(`${API_PREFIX}/cardholder/:cardholder_id/credit/adjustment`, async (req, res) => {
     const { cardholder_id } = req.params;
     const { credit_amount, type } = req.body;
+    const amount = Number.parseInt(credit_amount, 10);
 
     try {
         const account = await Account.findOne({ where: { cardholder_id } });
         if (!account) return responseError(res, 404, "کاربر یافت نشد");
 
+        if (!Number.isFinite(amount) || amount <= 0) {
+            return responseError(res, 422, "مبلغ نامعتبر است");
+        }
+
         if (type === 'CREDIT') {
-            account.credit_balance += credit_amount;
+            account.credit_balance += amount;
         } else if (type === 'DEBIT') {
-            account.credit_balance -= credit_amount;
+            account.credit_balance -= amount;
         } else {
             return responseError(res, 422, "نوع عملیات نامعتبر است (CREDIT/DEBIT)");
         }
@@ -92,7 +96,7 @@ app.post(`${API_PREFIX}/cardholder/:cardholder_id/credit/adjustment`, async (req
         await account.save();
         await CreditLog.create({
             cardholder_id,
-            credit_amount,
+            credit_amount: amount,
             type,
             adjusted_at: getJalaaliNow()
         });
@@ -116,13 +120,23 @@ app.post(`${API_PREFIX}/credit/adjustment`, async (req, res) => {
                 continue;
             }
 
-            if (item.type === 'CREDIT') account.credit_balance += item.credit_amount;
-            else if (item.type === 'DEBIT') account.credit_balance -= item.credit_amount;
+            const amount = Number.parseInt(item.credit_amount, 10);
+            if (!Number.isFinite(amount) || amount <= 0) {
+                results.push({ ...item, has_error: true, error: { message: "Invalid amount" }, credit_balance: null });
+                continue;
+            }
+
+            if (item.type === 'CREDIT') account.credit_balance += amount;
+            else if (item.type === 'DEBIT') account.credit_balance -= amount;
+            else {
+                results.push({ ...item, has_error: true, error: { message: "Invalid type" }, credit_balance: null });
+                continue;
+            }
 
             await account.save();
             await CreditLog.create({
                 cardholder_id: item.cardholder_id,
-                credit_amount: item.credit_amount,
+                credit_amount: amount,
                 type: item.type,
                 adjusted_at: getJalaaliNow()
             });
